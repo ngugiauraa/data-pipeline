@@ -1,0 +1,85 @@
+# Airflow (LocalExecutor) + Postgres. One Postgres server holds two databases:
+#   airflow    Airflow's own metadata
+#   warehouse  the pipeline's output tables
+#
+#   cp .env.example .env
+#   docker compose up airflow-init
+#   docker compose up -d
+#   open http://localhost:8080
+
+x-airflow-common: &airflow-common
+  build: .
+  image: kenya-data-pipeline:latest
+  env_file: .env
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${POSTGRES_PASSWORD}@postgres/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__CORE__DEFAULT_TIMEZONE: Africa/Nairobi
+    AIRFLOW__WEBSERVER__DEFAULT_UI_TIMEZONE: Africa/Nairobi
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
+    WAREHOUSE_URL: postgresql+psycopg2://warehouse:${WAREHOUSE_PASSWORD}@postgres/warehouse
+    LANDING_DIR: /opt/airflow/data/landing
+    GX_ANALYTICS_ENABLED: "false"
+  volumes:
+    # Mounted so edits show up without rebuilding the image.
+    - ./dags:/opt/airflow/dags
+    - ./pipeline:/opt/airflow/pipeline
+    - ./data:/opt/airflow/data
+    - airflow-logs:/opt/airflow/logs
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16.4
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: airflow
+      WAREHOUSE_PASSWORD: ${WAREHOUSE_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
+    ports:
+      # Warehouse access for psql/DBeaver screenshots. Bound to localhost only.
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+    restart: unless-stopped
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate &&
+        airflow users create --role Admin --username "$${AIRFLOW_ADMIN_USER}" --password "$${AIRFLOW_ADMIN_PASSWORD}" \
+          --firstname Admin --lastname User --email admin@example.com || true
+    restart: "no"
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      retries: 5
+    restart: unless-stopped
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  airflow-logs:
