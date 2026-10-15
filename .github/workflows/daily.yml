@@ -1,0 +1,48 @@
+name: Daily run
+
+# Runs the pipeline once a day without a server: download yesterday's
+# warehouse from the "data" release, load the new day (validated by the same
+# Great Expectations suites), and publish the updated warehouse back. The
+# public dashboard reads that file. A failed data-quality check fails the run.
+on:
+  schedule:
+    - cron: "0 4 * * *"   # 07:00 Nairobi
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-run
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GX_ANALYTICS_ENABLED: "false"
+      RUN_PREFIX: scheduled
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+
+      - name: Download the current warehouse
+        run: |
+          mkdir -p data
+          gh release download data --pattern warehouse.db --dir data || echo "No warehouse yet; starting a new one."
+
+      - name: Run the pipeline for yesterday
+        run: python -m pipeline.run_local
+
+      - name: Publish the updated warehouse
+        if: always()
+        run: |
+          test -f data/warehouse.db || exit 0
+          gh release view data >/dev/null 2>&1 || gh release create data --title "Warehouse data" \
+            --notes "SQLite warehouse updated daily by the scheduled pipeline run. Read by the dashboard."
+          gh release upload data data/warehouse.db --clobber

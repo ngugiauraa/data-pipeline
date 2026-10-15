@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - name: Lint
+        run: ruff check .
+      - name: Test
+        env:
+          GX_ANALYTICS_ENABLED: "false"
+        run: pytest -q
+
+  airflow-dag:
+    # Parses the DAG with the same Airflow version as the Docker image.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Airflow with its official constraints
+        run: |
+          pip install "apache-airflow==2.10.4" -r requirements.txt \
+            --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.10.4/constraints-3.12.txt"
+      - name: DAG imports cleanly
+        env:
+          AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          python - <<'EOF'
+          from airflow.models import DagBag
+          bag = DagBag(dag_folder="dags", include_examples=False, read_dags_from_db=False)
+          assert not bag.import_errors, bag.import_errors
+          dag = bag.dags["kenya_daily_pipeline"]
+          print(f"{dag.dag_id}: {len(dag.tasks)} tasks")
+          assert len(dag.tasks) == 13
+          EOF
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the Airflow image
+        run: docker build -t kenya-data-pipeline .
+      - name: Build the API and dashboard image
+        run: docker build -f Dockerfile.serve -t kenya-data-serve .
