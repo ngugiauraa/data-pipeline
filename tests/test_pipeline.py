@@ -1,10 +1,12 @@
 """Offline tests: transforms, data-quality gates and idempotent loading. No network."""
 
+from datetime import date
+
 import pandas as pd
 import pytest
 
 from pipeline import quality, storage
-from pipeline.sources import transform_earthquakes, transform_fx, transform_weather, transform_world_bank
+from pipeline.sources import ARCHIVE_URL, FORECAST_URL, transform_earthquakes, transform_fx, transform_weather, transform_world_bank, weather_url
 
 WEATHER = {
     city: {"daily": {"time": ["2026-10-13"], "temperature_2m_max": [tmax], "temperature_2m_min": [tmin], "precipitation_sum": [0.4]}}
@@ -90,3 +92,10 @@ def test_loads_are_idempotent(tmp_path):
         latest = pd.read_sql("select temp_max_c, loaded_at from weather where city = 'Nairobi'", conn)
     assert latest.iloc[0].to_dict() == {"temp_max_c": 25.1, "loaded_at": "t2"}
     assert storage.upsert(engine, "earthquakes", transform_earthquakes({"features": []}), "t3") == 0
+
+
+def test_old_dates_use_the_weather_archive():
+    today = date(2026, 10, 15)
+    assert weather_url(date(2026, 10, 14), today) == FORECAST_URL
+    assert weather_url(date(2026, 10, 8), today) == FORECAST_URL
+    assert weather_url(date(2026, 8, 15), today) == ARCHIVE_URL

@@ -36,12 +36,26 @@ def _get(url, params=None):
 
 # 1. Open-Meteo: daily weather ------------------------------------------------
 
+FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+# The forecast endpoint only keeps recent days; older dates come back as nulls
+# (caught by the data-quality checks during the first backfill). The archive
+# has full history but can lag a few days, so it is used for older dates only.
+ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
+ARCHIVE_AFTER_DAYS = 7
+
+
+def weather_url(run_date: date, today: date | None = None) -> str:
+    today = today or date.today()
+    return ARCHIVE_URL if (today - run_date).days > ARCHIVE_AFTER_DAYS else FORECAST_URL
+
+
 def fetch_weather(run_date: date):
-    """Observed weather for run_date for each city (past_days covers yesterday's run)."""
+    """Observed weather for run_date for each city."""
     payload = {}
+    url = weather_url(run_date)
     for city, (lat, lon) in CITIES.items():
         payload[city] = _get(
-            "https://api.open-meteo.com/v1/forecast",
+            url,
             {
                 "latitude": lat,
                 "longitude": lon,
