@@ -1,0 +1,12 @@
+# Small image for the read side (REST API and dashboard). The Airflow image
+# stays separate so serving does not carry Airflow's dependencies.
+FROM python:3.12-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+RUN useradd --create-home app
+WORKDIR /app
+COPY requirements-serve.txt .
+RUN pip install --no-cache-dir -r requirements-serve.txt
+COPY pipeline/ pipeline/
+COPY api/ api/
+COPY dashboard/ dashboard/
+USER app
